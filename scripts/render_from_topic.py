@@ -12,6 +12,8 @@ if PROJECT_ROOT not in sys.path:
 from src.pipeline.generate import generate
 from src.pipeline.render import render
 from src.pipeline.types import Plan, Script
+from src.youtube_auth import get_youtube_service
+from src.youtube_upload import upload_video
 
 
 def _slugify_topic(topic: str, *, max_len: int = 40) -> str:
@@ -104,6 +106,14 @@ def main():
     parser.add_argument("--margin-x", type=int, default=96, help="左右留白（預設 96）")
     parser.add_argument("--margin-y", type=int, default=160, help="上下留白（預設 160）")
     parser.add_argument("--font-size", type=int, default=64, help="字幕字體大小（預設 64）")
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="是否自動發佈到 YouTube（預設 False；前期人工審核用）。只有加上此參數才會自動上傳。",
+    )
+    parser.add_argument("--privacy", default="private", choices=["private", "unlisted", "public"], help="自動上傳隱私狀態（預設 private）")
+    parser.add_argument("--title", default=None, help="自動上傳標題（預設用 topic）")
+    parser.add_argument("--description", default="", help="自動上傳描述（預設空）")
     args = parser.parse_args()
 
     artifact = generate(args.topic, mode=args.mode, model=args.model)
@@ -118,6 +128,8 @@ def main():
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(_artifact_to_json(artifact), f, ensure_ascii=False, indent=2)
         print(out_json)
+        if args.publish:
+            raise SystemExit("你指定了 --publish，但未帶 --out（未產生影片）。請加上 --out 先產生 video.mp4 再上傳。")
         return
 
     # 情況 2/3：帶 --out => 產生影片與資料夾
@@ -150,9 +162,11 @@ def main():
 
     # 第二階段：依 mode 自動選擇後端
     if args.mode == "plan":
-        raise SystemExit(
-            f"目前 mode=plan 的影片生成後端尚未開發（video_api renderer）。已先輸出 {artifact_path}。"
-        )
+        if args.publish:
+            raise SystemExit(
+                f"你指定了 --publish，但 mode=plan 的影片生成後端尚未開發（尚無 video.mp4）。已先輸出 {artifact_path}。"
+            )
+        raise SystemExit(f"目前 mode=plan 的影片生成後端尚未開發（video_api renderer）。已先輸出 {artifact_path}。")
 
     out = render(
         artifact,
@@ -168,6 +182,18 @@ def main():
         font_size=args.font_size,
     )
     print(out)
+
+    if args.publish:
+        youtube = get_youtube_service()
+        resp = upload_video(
+            youtube,
+            file_path=out,
+            title=(args.title or args.topic),
+            description=args.description,
+            tags=[],
+            privacy_status=args.privacy,
+        )
+        print(f"published_video_id={resp.get('id')}")
 
 
 if __name__ == "__main__":

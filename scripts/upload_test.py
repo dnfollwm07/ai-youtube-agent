@@ -1,31 +1,13 @@
 import argparse
 import os
 import sys
-from googleapiclient.http import MediaFileUpload
+from src.youtube_upload import upload_video
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.youtube_auth import get_youtube_service
-
-
-def upload_video(youtube, file_path: str, title: str, description: str, tags: list[str], privacy_status: str):
-    request_body = {
-        "snippet": {
-            "title": title,
-            "description": description,
-            "tags": tags,
-            "categoryId": "22",
-        },
-        "status": {
-            "privacyStatus": privacy_status,
-        },
-    }
-
-    media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(part="snippet,status", body=request_body, media_body=media)
-    return request.execute()
 
 
 def main():

@@ -199,6 +199,10 @@
 - `--margin-x <int>`：預設 `96`
 - `--margin-y <int>`：預設 `160`
 - `--font-size <int>`：預設 `64`
+- `--publish`：預設 `False`（不自動發佈）；**只有加上此參數才會自動上傳到 YouTube**
+- `--privacy {private,unlisted,public}`：搭配 `--publish` 使用；預設 `private`
+- `--title <文字>`：搭配 `--publish` 使用；預設用 `topic`
+- `--description <文字>`：搭配 `--publish` 使用；預設空字串
 
 `--out`（三種情況）：
 - **不帶 `--out`**：不產生影片，只輸出單一 JSON 到 `outputs/`
@@ -217,6 +221,12 @@ python scripts/render_from_topic.py --mode script --topic "AI代人類工作"
 
 ```bash
 python scripts/render_from_topic.py --mode script --topic "貓狗互動超可愛的一段影片" --out
+```
+
+- 生成影片後自動上傳（預設 private；前期人工審核建議不要用）：
+
+```bash
+python scripts/render_from_topic.py --mode script --topic "貓狗互動超可愛的一段影片" --out --publish --privacy private
 ```
 
 - 生成影片（指定輸出資料夾名）：
