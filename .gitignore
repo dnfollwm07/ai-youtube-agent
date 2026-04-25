@@ -1,0 +1,14 @@
+.DS_Store
+
+# Secrets / credentials
+auth/client_secret.json
+token.pickle
+
+# Common local artifacts (future-proofing)
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+data/
+outputs/
