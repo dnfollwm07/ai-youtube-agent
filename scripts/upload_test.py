@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--description", default="", help="影片描述")
     parser.add_argument("--tags", default="", help="以逗號分隔的 tags，例如：ai,news,shorts")
     parser.add_argument("--privacy", default="private", choices=["private", "unlisted", "public"], help="隱私狀態（預設 private）")
+    parser.add_argument("--made-for-kids", action="store_true", help="是否宣告為兒童向內容（COPPA）。預設 False。")
     args = parser.parse_args()
 
     file_path = args.file
@@ -33,6 +34,7 @@ def main():
         description=args.description,
         tags=tags,
         privacy_status=args.privacy,
+        made_for_kids=args.made_for_kids,
     )
 
     video_id = resp.get("id")

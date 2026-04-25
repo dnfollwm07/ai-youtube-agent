@@ -11,6 +11,7 @@ def upload_video(
     description: str = "",
     tags: list[str] | None = None,
     privacy_status: str = "private",
+    made_for_kids: bool = False,
 ):
     request_body = {
         "snippet": {
@@ -21,6 +22,8 @@ def upload_video(
         },
         "status": {
             "privacyStatus": privacy_status,
+            # 對應 YouTube Studio 的 Audience / COPPA 設定
+            "selfDeclaredMadeForKids": made_for_kids,
         },
     }
 

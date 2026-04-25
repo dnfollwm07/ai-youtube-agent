@@ -26,7 +26,15 @@ def _slugify_topic(topic: str, *, max_len: int = 40) -> str:
 
 def _artifact_to_json(artifact: Script | Plan) -> dict:
     if isinstance(artifact, Script):
-        return {"hook": artifact.hook, "body": artifact.body, "ending": artifact.ending}
+        return {
+            "hook": artifact.hook,
+            "body": artifact.body,
+            "ending": artifact.ending,
+            "upload_title": artifact.upload_title,
+            "upload_description": artifact.upload_description,
+            "hashtags": artifact.hashtags,
+            "tags": artifact.tags,
+        }
     return {
         "title_idea": artifact.title_idea,
         "style": {"genre": artifact.genre, "pace": artifact.pace, "mood": list(artifact.mood)},
@@ -81,6 +89,114 @@ def _force_under_outputs(path: str) -> str:
 
     return os.path.join("outputs", path)
 
+def _ascii_ratio(s: str) -> float:
+    if not s:
+        return 0.0
+    ascii_letters = sum(1 for ch in s if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
+    return ascii_letters / max(1, len(s))
+
+def _is_mostly_zh(s: str) -> bool:
+    return _ascii_ratio(s) <= 0.25
+
+
+def _sanitize_hashtags(hashtags: list[str] | None) -> list[str]:
+    if not hashtags:
+        return []
+    out: list[str] = []
+    for h in hashtags:
+        if not isinstance(h, str):
+            continue
+        h = h.strip()
+        if not h:
+            continue
+        if not h.startswith("#"):
+            h = "#" + h
+        if h.lower() == "#shorts" or _is_mostly_zh(h):
+            out.append(h)
+    seen = set()
+    dedup: list[str] = []
+    for h in out:
+        if h not in seen:
+            seen.add(h)
+            dedup.append(h)
+    return dedup
+
+
+def _sanitize_tags(tags: list[str] | None) -> list[str]:
+    if not tags:
+        return []
+    out: list[str] = []
+    for t in tags:
+        if not isinstance(t, str):
+            continue
+        t = t.strip().lstrip("#")
+        if not t:
+            continue
+        if _is_mostly_zh(t):
+            out.append(t)
+    seen = set()
+    dedup: list[str] = []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            dedup.append(t)
+    return dedup
+
+
+def _default_hashtags_for_topic(topic: str) -> list[str]:
+    return ["#shorts", "#冷知識", "#腦洞", "#科普", "#你怎麼看", "#熱門話題"]
+
+
+def _clean_description_hashtags(text: str) -> str:
+    """
+    移除描述中「大量英文」的 hashtag（保留 #shorts）。
+    """
+    if not text:
+        return text
+    parts = text.split()
+    cleaned: list[str] = []
+    for p in parts:
+        if p.startswith("#"):
+            if p.lower() == "#shorts" or _is_mostly_zh(p):
+                cleaned.append(p)
+            else:
+                continue
+        else:
+            cleaned.append(p)
+    return " ".join(cleaned)
+
+
+def _clean_description_prefixes(text: str) -> str:
+    """
+    移除模型常見的模板前綴（例如「超短摘要：」「摘要：」），避免描述像機器輸出。
+    """
+    if not text:
+        return text
+    lines = [ln.strip() for ln in str(text).splitlines()]
+    cleaned = []
+    for ln in lines:
+        ln = re.sub(r"^(超短摘要|摘要|結論|引導)\s*[:：]\s*", "", ln)
+        cleaned.append(ln)
+    return "\n".join([ln for ln in cleaned if ln])
+
+
+def _soften_description_call_to_action(text: str) -> str:
+    """
+    避免描述被硬帶站隊/辯論（除非使用者本來就想做辯論片）。
+    這裡只做非常輕量的替換/移除，保留描述的自然度。
+    """
+    if not text:
+        return text
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    softened: list[str] = []
+    for ln in lines:
+        # 移除明顯站隊句式
+        if re.search(r"你站哪邊", ln):
+            continue
+        if re.search(r"支持.+反對", ln):
+            continue
+        softened.append(ln)
+    return "\n".join(softened)
 
 def main():
     parser = argparse.ArgumentParser(description="兩階段管線：先生成 script/plan，再選擇渲染/生成影片方式")
@@ -112,6 +228,11 @@ def main():
         help="是否自動發佈到 YouTube（預設 False；前期人工審核用）。只有加上此參數才會自動上傳。",
     )
     parser.add_argument("--privacy", default="private", choices=["private", "unlisted", "public"], help="自動上傳隱私狀態（預設 private）")
+    parser.add_argument(
+        "--made-for-kids",
+        action="store_true",
+        help="上傳時是否宣告為兒童向內容（COPPA）。預設 False（不勾選）。只有加上此參數才為 True。",
+    )
     parser.add_argument("--title", default=None, help="自動上傳標題（預設用 topic）")
     parser.add_argument("--description", default="", help="自動上傳描述（預設空）")
     args = parser.parse_args()
@@ -185,13 +306,46 @@ def main():
 
     if args.publish:
         youtube = get_youtube_service()
+        # 若使用者未手動指定，優先用 AI 生成的 metadata
+        ai_title = artifact.upload_title if isinstance(artifact, Script) else None
+        ai_desc = artifact.upload_description if isinstance(artifact, Script) else None
+
+        # 輕量兜底：避免中英夾雜/學術腔造成品質很差（例如大量英文）
+        if ai_title and _ascii_ratio(ai_title) > 0.25:
+            ai_title = None
+        if ai_desc and _ascii_ratio(ai_desc) > 0.25:
+            ai_desc = None
+
+        upload_title = args.title or ai_title or args.topic
+        upload_description = args.description or (ai_desc or "") or ""
+        upload_description = _clean_description_prefixes(upload_description)
+        upload_description = _clean_description_hashtags(upload_description)
+        upload_description = _soften_description_call_to_action(upload_description)
+        tags = _sanitize_tags(artifact.tags if isinstance(artifact, Script) else None)
+        hashtags = _sanitize_hashtags(artifact.hashtags if isinstance(artifact, Script) else None)
+        if "#shorts" not in [h.lower() for h in hashtags]:
+            hashtags = ["#shorts", *hashtags]
+        if len(hashtags) < 5:
+            for h in _default_hashtags_for_topic(args.topic):
+                if h not in hashtags:
+                    hashtags.append(h)
+                if len(hashtags) >= 8:
+                    break
+        if hashtags and upload_description:
+            # 若 description 沒包含 hashtags，簡單附加在後面（保持可讀性）
+            if not any(h in upload_description for h in hashtags):
+                upload_description = upload_description.rstrip() + "\n\n" + " ".join(hashtags)
+        elif hashtags and not upload_description:
+            upload_description = " ".join(hashtags)
+
         resp = upload_video(
             youtube,
             file_path=out,
-            title=(args.title or args.topic),
-            description=args.description,
-            tags=[],
+            title=upload_title,
+            description=upload_description,
+            tags=tags,
             privacy_status=args.privacy,
+            made_for_kids=args.made_for_kids,
         )
         print(f"published_video_id={resp.get('id')}")
 

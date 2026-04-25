@@ -201,6 +201,7 @@
 - `--font-size <int>`：預設 `64`
 - `--publish`：預設 `False`（不自動發佈）；**只有加上此參數才會自動上傳到 YouTube**
 - `--privacy {private,unlisted,public}`：搭配 `--publish` 使用；預設 `private`
+- `--made-for-kids`：搭配 `--publish` 使用；預設 `False`。對應 YouTube Studio 的 Audience（COPPA）「是否兒童向內容」
 - `--title <文字>`：搭配 `--publish` 使用；預設用 `topic`
 - `--description <文字>`：搭配 `--publish` 使用；預設空字串
 

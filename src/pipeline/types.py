@@ -13,6 +13,11 @@ class Script:
     hook: str
     body: list[str]
     ending: str
+    # 上傳用 metadata（選填；不影響現有 hook/body/ending 產出與渲染）
+    upload_title: str | None = None
+    upload_description: str | None = None
+    hashtags: list[str] | None = None
+    tags: list[str] | None = None
 
     def sentences(self) -> list[str]:
         return [self.hook, *self.body, self.ending]
