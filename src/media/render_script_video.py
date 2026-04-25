@@ -35,18 +35,12 @@ def _sanitize_filename(s: str) -> str:
 
 
 def _escape_drawtext(text: str) -> str:
-    # ffmpeg drawtext needs escaping for ':', '\', and apostrophes
-    # 換行：drawtext 支援以 \n 表示換行。因為我們是用 argv（非 shell），
-    # ffmpeg 會直接收到字串，因此這裡要保留「單一反斜線」的 \n。
-    nl_token = "__NL__"
-    text = text.replace("\n", nl_token)
-
-    escaped = (
+    # ffmpeg drawtext filter string escaping for values like fontfile/textfile paths
+    return (
         text.replace("\\", "\\\\")
         .replace(":", "\\:")
         .replace("'", "\\'")
     )
-    return escaped.replace(nl_token, "\\n")
 
 
 def _resolve_font_file(preferred: str | None) -> str | None:
@@ -104,6 +98,7 @@ def _make_segment(
     audio_path: str,
     out_path: str,
     cfg: RenderConfig,
+    work_dir: str,
 ) -> None:
     audio_duration = get_duration_seconds(audio_path)
     duration = audio_duration
@@ -111,17 +106,24 @@ def _make_segment(
     # 估算每行可容納字元數，避免超出畫面寬度
     usable_w = max(1, cfg.width - 2 * cfg.margin_x)
     # drawtext 的 text_w 受字型與字距影響，這裡保守估算，避免仍然超出畫面
-    approx_char_w = max(1.0, cfg.font_size * 1.15)
-    max_chars = max(4, int(usable_w / approx_char_w))
+    approx_char_w = max(1.0, cfg.font_size * 1.35)
+    max_chars = max(3, int(usable_w / approx_char_w))
     wrapped = _wrap_text(text, max_chars=max_chars)
+
+    # 避免 drawtext 的 \n 跳脫問題：用 textfile 直接餵「真正換行」文字（像一個 view 的概念）
+    os.makedirs(work_dir, exist_ok=True)
+    textfile_path = os.path.join(work_dir, f"_text_{_sanitize_filename(os.path.basename(out_path))}.txt")
+    with open(textfile_path, "w", encoding="utf-8") as f:
+        f.write(wrapped)
 
     font_file = _resolve_font_file(cfg.font_file)
     font_part = f"fontfile={_escape_drawtext(font_file)}:" if font_file else ""
+    textfile_part = f"textfile='{_escape_drawtext(os.path.abspath(textfile_path))}':reload=0:"
 
     drawtext = (
         "drawtext="
         f"{font_part}"
-        f"text='{_escape_drawtext(wrapped)}':"
+        f"{textfile_part}"
         "x=(w-text_w)/2:"
         "y=(h-text_h)/2:"
         f"fontsize={cfg.font_size}:"
@@ -207,7 +209,7 @@ def render_script_to_video(
         else:
             run_ffmpeg(["-i", raw_audio_path, "-ar", "44100", "-ac", "2", audio_path])
 
-        _make_segment(text=sentence, audio_path=audio_path, out_path=seg_path, cfg=cfg)
+        _make_segment(text=sentence, audio_path=audio_path, out_path=seg_path, cfg=cfg, work_dir=work_dir)
         seg_paths.append(seg_path)
 
     # concat demuxer
