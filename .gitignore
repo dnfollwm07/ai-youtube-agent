@@ -3,6 +3,7 @@
 # Secrets / credentials
 auth/client_secret.json
 token.pickle
+auth/token.pickle
 
 # Common local artifacts (future-proofing)
 __pycache__/
