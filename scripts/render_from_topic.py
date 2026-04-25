@@ -84,7 +84,6 @@ def main():
     parser = argparse.ArgumentParser(description="兩階段管線：先生成 script/plan，再選擇渲染/生成影片方式")
     parser.add_argument("--topic", required=True, help="主題，例如：貓狗互動超可愛的一段影片")
     parser.add_argument("--mode", default="script", choices=["script", "plan"], help="第一階段：生成類型")
-    parser.add_argument("--backend", default="tts_ffmpeg", choices=["tts_ffmpeg", "video_api"], help="第二階段：影片生成方式")
     parser.add_argument(
         "--out",
         nargs="?",
@@ -149,9 +148,15 @@ def main():
     out_mp4_path = os.path.join(run_dir, "video.mp4")
     work_dir = os.path.join(run_dir, "_work")
 
+    # 第二階段：依 mode 自動選擇後端
+    if args.mode == "plan":
+        raise SystemExit(
+            f"目前 mode=plan 的影片生成後端尚未開發（video_api renderer）。已先輸出 {artifact_path}。"
+        )
+
     out = render(
         artifact,
-        backend=args.backend,
+        backend="tts_ffmpeg",
         out_mp4_path=out_mp4_path,
         work_dir=work_dir,
         voice=args.voice,

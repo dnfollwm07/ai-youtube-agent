@@ -4,6 +4,7 @@ import os
 import subprocess
 
 from .base import TTSProvider
+from src.config import get_settings
 
 
 class MacOSSayTTS(TTSProvider):
@@ -18,8 +19,9 @@ class MacOSSayTTS(TTSProvider):
         return "macos_say"
 
     def __init__(self, *, voice: str | None = None, rate_wpm: int | None = None):
-        self._voice = voice or os.environ.get("TTS_VOICE") or self._pick_default_zh_voice()
-        self._rate_wpm = rate_wpm
+        s = get_settings()
+        self._voice = voice or s.tts_voice or self._pick_default_zh_voice()
+        self._rate_wpm = rate_wpm if rate_wpm is not None else s.tts_rate_wpm
 
     @staticmethod
     def _pick_default_zh_voice() -> str | None:
@@ -32,12 +34,19 @@ class MacOSSayTTS(TTSProvider):
             return None
 
         # 較常見的中文 voice 名稱（依 macOS 版本不同）
+        # 注意：同一語音在不同系統可能有不同拼法（例如 Tingting vs Ting-Ting）。
         preferred_names = [
-            "Ting-Ting",  # zh_HK
-            "Mei-Jia",    # zh_TW
-            "Sin-Ji",     # zh_TW
-            "Yu-Shu",     # zh_CN (有些版本)
-            "Li-mu",      # zh_CN
+            # 你這台機器上實際可用的（say -v '?' | grep zh_）
+            "Tingting",  # zh_CN
+            "Meijia",    # zh_TW
+            "Sinji",     # zh_HK
+
+            # 其他 macOS 版本可能出現的拼法（保留兼容）
+            "Ting-Ting",
+            "Mei-Jia",
+            "Sin-Ji",
+            "Yu-Shu",
+            "Li-mu",
         ]
 
         lines = proc.stdout.splitlines()
@@ -51,8 +60,9 @@ class MacOSSayTTS(TTSProvider):
             locale = parts[1] if len(parts) > 1 else ""
             available.append((name, locale))
 
+        available_names = {name for name, _ in available}
         for want in preferred_names:
-            if any(name == want for name, _ in available):
+            if want in available_names:
                 return want
 
         # 退而求其次：挑第一個 zh_* locale

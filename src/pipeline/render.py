@@ -6,6 +6,7 @@ from datetime import datetime
 from src.media.render_script_video import render_script_to_video
 from src.media.render_script_video import RenderConfig
 from src.media.tts.macos_say import MacOSSayTTS
+from src.config import get_settings
 
 from .types import Plan, RenderBackend, Script
 
@@ -24,6 +25,7 @@ def render(
     margin_y: int | None = None,
     font_size: int | None = None,
 ) -> str:
+    s = get_settings()
     if not out_mp4_path:
         os.makedirs("outputs", exist_ok=True)
         out_mp4_path = os.path.join("outputs", datetime.now().strftime("%Y%m%d_%H%M%S") + ".mp4")
@@ -35,11 +37,11 @@ def render(
             raise ValueError("backend=tts_ffmpeg 目前只支援 mode=script（因為是一句一句配音+字幕）。")
         tts = MacOSSayTTS(voice=voice, rate_wpm=rate)
         cfg = RenderConfig(
-            width=width or RenderConfig.width,
-            height=height or RenderConfig.height,
-            margin_x=margin_x or RenderConfig.margin_x,
-            margin_y=margin_y or RenderConfig.margin_y,
-            font_size=font_size or RenderConfig.font_size,
+            width=width or s.video_width,
+            height=height or s.video_height,
+            margin_x=margin_x or s.video_margin_x,
+            margin_y=margin_y or s.video_margin_y,
+            font_size=font_size or s.video_font_size,
         )
         return render_script_to_video(
             sentences=artifact.sentences(),

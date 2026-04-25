@@ -172,3 +172,115 @@
 - Phase 1 期間使用 **人工審核後發佈（human-in-the-loop）**
 - 目標是「可持續迭代與真實回饋」，而非一次性爆款或無限量產
 
+---
+
+## 9. CLI 指令速查表（本地開發/測試）
+
+本區整理目前可用的本地指令、參數與預設值，方便直接複製使用。
+
+### 9.1 `scripts/render_from_topic.py`（兩階段管線：生成 → 渲染）
+
+用途：
+- 第一階段：生成 `script` 或 `plan`
+- 第二階段：由程式依 `mode` 自動決定是否/如何產生影片  
+  - `mode=script`：支援產生文字影片（TTS + ffmpeg）  
+  - `mode=plan`：影片生成後端尚未開發（會輸出 `plan.json`，並提示尚未支援產生影片）
+
+必填參數：
+- `--topic <主題>`
+
+選填參數（與預設值）：
+- `--mode {script,plan}`：預設 `script`
+- `--model <模型名>`：預設讀 `LLM_MODEL`，否則 `llama3`
+- `--voice <voice>`：選填；未填時會優先自動挑選可用的中文 voice
+- `--rate <wpm>`：選填；未填時讀 `TTS_RATE_WPM`（若有設定）
+- `--width <int>`：預設 `1080`
+- `--height <int>`：預設 `1920`
+- `--margin-x <int>`：預設 `96`
+- `--margin-y <int>`：預設 `160`
+- `--font-size <int>`：預設 `64`
+
+`--out`（三種情況）：
+- **不帶 `--out`**：不產生影片，只輸出單一 JSON 到 `outputs/`
+- **帶 `--out` 但不給值**：用預設命名輸出資料夾，並在其中輸出 `video.mp4` 與相關檔案
+- **帶 `--out <名稱>`**（不含 `.mp4`）：以 `<名稱>` 作為輸出資料夾名，並在其中輸出 `video.mp4` 與相關檔案  
+  - 規則：所有輸出都會被強制放在 `outputs/` 底下
+
+常用例子：
+- 只驗證生成結果（不產生影片）：
+
+```bash
+python scripts/render_from_topic.py --mode script --topic "AI代人類工作"
+```
+
+- 生成影片（預設輸出資料夾與檔名）：
+
+```bash
+python scripts/render_from_topic.py --mode script --topic "貓狗互動超可愛的一段影片" --out
+```
+
+- 生成影片（指定輸出資料夾名）：
+
+```bash
+python scripts/render_from_topic.py --mode script --topic "AI代人類工作" --out my_run_name
+```
+
+### 9.2 `scripts/llm_smoke_test.py`（LLM 冒煙測試）
+
+用途：只測試 LLM 是否能回傳合法 JSON（不會產生影片、也不支援 `--out`）。
+
+必填參數：
+- `--topic <主題>`
+
+選填參數：
+- `--mode {script,plan}`：預設 `script`
+- `--provider <provider>`：預設讀 `LLM_PROVIDER`（目前預設 `ollama`）
+- `--model <模型名>`：預設讀 `LLM_MODEL`，否則 `llama3`
+
+例：
+
+```bash
+python scripts/llm_smoke_test.py --mode script --topic "AI代人類工作"
+```
+
+### 9.3 `scripts/upload_test.py`（YouTube 上傳測試）
+
+用途：測試本地 OAuth 登入與上傳影片。
+
+必填參數：
+- `--file <影片檔路徑>`
+- `--title <標題>`
+
+選填參數：
+- `--description <文字>`：預設空字串
+- `--tags <逗號分隔>`：預設空字串
+- `--privacy {private,unlisted,public}`：預設 `private`
+
+例：
+
+```bash
+python scripts/upload_test.py --file "outputs/example.mp4" --title "test upload" --privacy private
+```
+
+---
+
+## 10. 環境變數（集中設定：`src/config.py`）
+
+你可以用環境變數覆蓋預設值（不設也能跑，會使用預設值或自動偵測）。
+
+### 10.1 LLM
+- `LLM_PROVIDER`：預設 `ollama`
+- `LLM_MODEL`：預設 `llama3`
+- `OLLAMA_BASE_URL`：預設 `http://localhost:11434`
+
+### 10.2 TTS（macOS `say`）
+- `TTS_VOICE`：預設不設，由程式自動挑選可用中文 voice（例如 `Tingting`/`Meijia`/`Sinji`）
+- `TTS_RATE_WPM`：選填（語速）
+
+### 10.3 影片渲染預設（Shorts 9:16）
+- `VIDEO_WIDTH`：預設 `1080`
+- `VIDEO_HEIGHT`：預設 `1920`
+- `VIDEO_MARGIN_X`：預設 `96`
+- `VIDEO_MARGIN_Y`：預設 `160`
+- `VIDEO_FONT_SIZE`：預設 `64`
+

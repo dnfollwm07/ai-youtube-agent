@@ -65,7 +65,21 @@ def generate(topic: str, *, mode: Mode = "script", model: str | None = None) -> 
 
     style = data.get("style") or {}
     scenes = []
-    for s in data.get("scenes") or []:
+    raw_scenes = data.get("scenes") or []
+    # 兜底：模型偶爾把 scenes 輸出成字串（例如整段 JSON 被包成字串）
+    if isinstance(raw_scenes, str):
+        try:
+            raw_scenes = json.loads(raw_scenes)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid plan.scenes: expected list, got string that is not JSON. {e}") from e
+    if isinstance(raw_scenes, dict):
+        raw_scenes = [raw_scenes]
+    if not isinstance(raw_scenes, list):
+        raise ValueError(f"Invalid plan.scenes: expected list, got {type(raw_scenes).__name__}")
+
+    for s in raw_scenes:
+        if not isinstance(s, dict):
+            raise ValueError(f"Invalid plan.scenes item: expected object, got {type(s).__name__}")
         scenes.append(
             PlanScene(
                 scene=int(s["scene"]),
