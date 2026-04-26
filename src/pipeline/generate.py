@@ -12,6 +12,7 @@ from .types import Mode, Plan, PlanScene, Script
 
 
 _PROMPT_CACHE: dict[str, str] = {}
+_CONFIG_CACHE: dict[str, dict] = {}
 
 
 def _repo_root() -> Path:
@@ -30,6 +31,36 @@ def _read_prompt_file(filename: str) -> str:
     return path.read_text(encoding="utf-8").strip() + "\n"
 
 
+def _read_config_file(filename: str) -> dict:
+    base = Path(os.environ.get("PROMPTS_DIR", str(_repo_root() / "prompts")))
+    path = base / filename
+    if not path.exists():
+        raise FileNotFoundError(f"找不到設定檔：{path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def get_config(name: str = "prompts_config") -> dict:
+    """
+    統一配置入口（prompt 檔名、次數限制、溫度、重試等）。
+    預設讀 prompts/config.json，可用環境變數 PROMPTS_CONFIG_FILE 覆寫檔名。
+    """
+    mapping = {"prompts_config": os.environ.get("PROMPTS_CONFIG_FILE", "config.json")}
+    if name not in mapping:
+        raise ValueError(f"Unknown config name: {name}")
+    if name not in _CONFIG_CACHE:
+        _CONFIG_CACHE[name] = _read_config_file(mapping[name])
+    return _CONFIG_CACHE[name]
+
+
+def _cfg(path: str, default=None):
+    cur = get_config("prompts_config")
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return default
+        cur = cur[part]
+    return cur
+
+
 def get_prompt(name: str) -> str:
     """
     name:
@@ -38,10 +69,10 @@ def get_prompt(name: str) -> str:
       - other_information
     """
     mapping = {
-        "script_system": "script_system_prompt.txt",
-        "plan_system": "plan_system_prompt.txt",
-        "other_information": "other_information_prompt.txt",
-        "script_self_review": "script_self_review_prompt.txt",
+        "script_system": str(_cfg("paths.script_system_prompt", "script_system_prompt.txt")),
+        "plan_system": str(_cfg("paths.plan_system_prompt", "plan_system_prompt.txt")),
+        "other_information": str(_cfg("paths.other_information_prompt", "other_information_prompt.txt")),
+        "script_self_review": str(_cfg("paths.script_self_review_prompt", "script_self_review_prompt.txt")),
     }
     if name not in mapping:
         raise ValueError(f"Unknown prompt name: {name}")
@@ -71,11 +102,27 @@ def _chat_json(provider, *, messages: list[ChatMessage], model: str, temperature
     last_err: Exception | None = None
     for _ in range(max_tries):
         try:
+            # 可選：呼叫預算（避免無止境重試/連鎖）
+            # budget = {"remaining": int}
+            budget = getattr(_chat_json, "_budget", None)
+            if isinstance(budget, dict) and isinstance(budget.get("remaining"), int):
+                if budget["remaining"] <= 0:
+                    raise RuntimeError("LLM call budget exhausted")
+                budget["remaining"] -= 1
             r = provider.chat(messages, model=model, temperature=temperature, extra={"format": "json"})
             return _json_from_llm(r.content)
         except Exception as e:
             last_err = e
     raise last_err or RuntimeError("LLM JSON parse failed")
+
+
+def _script_json_max_tries() -> int:
+    v = _cfg("script.json_parse_retry.max_tries", 3)
+    try:
+        v = int(v)
+    except Exception:
+        v = 3
+    return max(1, min(v, 8))
 
 _QUALITY_CACHE: dict[str, dict] = {}
 
@@ -89,7 +136,12 @@ def _read_quality_rules_file(filename: str) -> dict:
 
 
 def get_quality_rules(name: str = "script_quality_rules") -> dict:
-    mapping = {"script_quality_rules": os.environ.get("SCRIPT_QUALITY_RULES_FILE", "script_quality_rules.json")}
+    mapping = {
+        "script_quality_rules": os.environ.get(
+            "SCRIPT_QUALITY_RULES_FILE",
+            str(_cfg("paths.script_quality_rules", "script_quality_rules.json")),
+        )
+    }
     if name not in mapping:
         raise ValueError(f"Unknown quality rules name: {name}")
     if name not in _QUALITY_CACHE:
@@ -166,8 +218,30 @@ def _is_script_generic(hook: str, body: list[str], ending: str) -> bool:
 
 def _script_from_data(data: dict) -> Script:
     body = data.get("body")
-    if not isinstance(body, list) or len(body) != 6:
-        raise ValueError(f"Invalid script.body: expected list with 6 items, got {type(body).__name__} len={len(body) if isinstance(body, list) else 'n/a'}")
+    if not isinstance(body, list):
+        raise ValueError(f"Invalid script.body: expected list, got {type(body).__name__}")
+    body = [str(x).strip() for x in body if str(x).strip()]
+    # 容錯：模型偶爾會輸出 >6 句或 <6 句，這裡先做最佳努力正規化，避免整條流程直接崩潰。
+    if len(body) > 6:
+        # 保留前 5 句，把剩下的合併成第 6 句
+        tail = "；".join(body[5:]).strip("；")
+        body = [*body[:5], tail or body[5]]
+    elif len(body) < 6:
+        # 先嘗試把較長的句子用常見標點拆開補足
+        parts: list[str] = []
+        for s in body:
+            # 先用較強斷點拆
+            for p in re.split(r"[。！？!?；;]+", s):
+                p = p.strip()
+                if p:
+                    parts.append(p)
+        body = parts
+        # 仍不足就用最後一句做輕量補齊（避免空字串）
+        while len(body) < 6 and body:
+            body.append(body[-1])
+        body = body[:6]
+    if len(body) != 6:
+        raise ValueError(f"Invalid script.body after normalize: expected 6 items, got {len(body)}")
     upload_description = data.get("upload_description")
     if isinstance(upload_description, list):
         upload_description = "\n".join(str(x) for x in upload_description)
@@ -228,7 +302,15 @@ def _generate_script_candidates(
             # 加一點點差異，讓模型更願意走不同寫法
             ChatMessage(role="user", content=f"主題：{topic}\n請給我版本 {i+1}。"),
         ]
-        out.append(_chat_json(provider, messages=msgs, model=model, temperature=temperature, max_tries=3))
+        out.append(
+            _chat_json(
+                provider,
+                messages=msgs,
+                model=model,
+                temperature=temperature,
+                max_tries=_script_json_max_tries(),
+            )
+        )
     return out
 
 
@@ -245,7 +327,13 @@ def _self_review_and_merge_script(
         ChatMessage(role="system", content=SCRIPT_SELF_REVIEW_PROMPT),
         ChatMessage(role="user", content=review_user),
     ]
-    return _chat_json(provider, messages=msgs, model=model, temperature=temperature, max_tries=3)
+    return _chat_json(
+        provider,
+        messages=msgs,
+        model=model,
+        temperature=temperature,
+        max_tries=_script_json_max_tries(),
+    )
 
 
 def generate(topic: str, *, mode: Mode = "script", model: str | None = None) -> Script | Plan:
@@ -259,44 +347,55 @@ def generate(topic: str, *, mode: Mode = "script", model: str | None = None) -> 
     ]
 
     if mode == "script":
-        n = int(os.environ.get("SCRIPT_N_CANDIDATES", "3"))
+        # 呼叫上限（避免候選 * 重試 + 自評 * 重試 造成大量請求）
+        # 估算：每個候選最多 max_tries 次；自評最多 max_tries 次；再加少量保底
+        max_calls = int(os.environ.get("SCRIPT_MAX_LLM_CALLS", str(_cfg("script.max_llm_calls", 12))))
+        max_calls = max(3, min(max_calls, 60))
+        _chat_json._budget = {"remaining": max_calls}  # type: ignore[attr-defined]
+
+        n = int(os.environ.get("SCRIPT_N_CANDIDATES", str(_cfg("script.n_candidates", 3))))
         n = max(1, min(n, 6))
 
-        # 先生成多個候選版本
-        candidates = _generate_script_candidates(
-            provider,
-            model=model,
-            topic=topic,
-            system=system,
-            n=n,
-            temperature=0.7,
-        )
+        candidates: list[dict] = []
+        try:
+            # 先生成多個候選版本
+            candidates = _generate_script_candidates(
+                provider,
+                model=model,
+                topic=topic,
+                system=system,
+                n=n,
+                temperature=float(_cfg("script.candidate_temperature", 0.7)),
+            )
+        except Exception:
+            candidates = []
 
-        # 讓模型自評挑最佳/合併（最多 2 次，第二次更低溫、更強約束）
-        merged: dict | None = None
-        for t, extra_note in [(0.4, ""), (0.2, "\n注意：body 必須剛好 6 句；欄位不可缺；不可輸出任何多餘文字。")]:
+        # 若候選不足（例如 budget 用完或解析一直失敗），直接走保底一次生成
+        if not candidates:
+            data = _chat_json(
+                provider,
+                messages=messages,
+                model=model,
+                temperature=0.6,
+                max_tries=min(2, _script_json_max_tries()),
+            )
+            return _script_from_data(data)
+
+        # 讓模型自評挑最佳/合併（可配置開關；避免請求爆炸，品質規則已在自評 prompt 內）
+        if bool(_cfg("script.self_review.enabled", True)):
             try:
                 merged = _self_review_and_merge_script(
                     provider,
                     model=model,
                     topic=topic,
                     candidates=candidates,
-                    temperature=t,
+                    temperature=float(_cfg("script.self_review.temperature", 0.35)),
                 )
-                if extra_note:
-                    # 若第一次失敗，補一個強提醒（不改 system prompt，避免維護分裂）
-                    merged = _self_review_and_merge_script(
-                        provider,
-                        model=model,
-                        topic=topic + extra_note,
-                        candidates=candidates,
-                        temperature=t,
-                    )
                 script = _script_from_data(merged)
                 if not _is_script_metadata_bad(merged) and not _is_script_generic(script.hook, script.body, script.ending):
                     return script
             except Exception:
-                merged = None
+                pass
 
         # 校驗仍不合格：用本地打分挑候選保底（必須能通過 _script_from_data）
         best: dict | None = None
@@ -314,10 +413,16 @@ def generate(topic: str, *, mode: Mode = "script", model: str | None = None) -> 
             return _script_from_data(best)
 
         # 最後保底：把原始 system prompt 再跑一次（避免全候選都壞掉）
-        data = _chat_json(provider, messages=messages, model=model, temperature=0.6, max_tries=3)
+        data = _chat_json(
+            provider,
+            messages=messages,
+            model=model,
+            temperature=0.6,
+            max_tries=min(2, _script_json_max_tries()),
+        )
         return _script_from_data(data)
 
-    data = _chat_json(provider, messages=messages, model=model, temperature=0.6, max_tries=3)
+    data = _chat_json(provider, messages=messages, model=model, temperature=0.6, max_tries=_script_json_max_tries())
 
     style = data.get("style") or {}
     scenes = []

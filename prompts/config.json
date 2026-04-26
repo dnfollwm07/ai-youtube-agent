@@ -1,0 +1,22 @@
+{
+  "paths": {
+    "script_system_prompt": "script_system_prompt.txt",
+    "plan_system_prompt": "plan_system_prompt.txt",
+    "other_information_prompt": "other_information_prompt.txt",
+    "script_self_review_prompt": "script_self_review_prompt.txt",
+    "script_quality_rules": "script_quality_rules.json"
+  },
+  "script": {
+    "n_candidates": 3,
+    "max_llm_calls": 12,
+    "candidate_temperature": 0.7,
+    "self_review": {
+      "enabled": true,
+      "temperature": 0.35
+    },
+    "json_parse_retry": {
+      "max_tries": 3
+    }
+  }
+}
+

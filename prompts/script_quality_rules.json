@@ -30,6 +30,6 @@
     "有一段"
   ],
   "require_evidence_token_each_line": true,
-  "min_unique_body_lines": 4
+  "min_unique_body_lines": 6
 }
 
